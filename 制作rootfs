@@ -1,0 +1,107 @@
+下载对应型号的TTL包，到这里找，注意是TTL!!!：https://www.ecoo.top/download
+解压后可以看到有rootfs-32.img文件(windows百度显示文件后缀名可显示.img)
+将rootfs-32.img上传至电脑编译系统的主机中
+#～
+挂载img(没有sudo命令的切换到root用户操作，以下操作需要root)：
+sudo mount /home/hongli/rootfs-32.img /mnt/
+下载官方包
+https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.5-base-armhf.tar.gz
+#~
+mkdir ubuntu
+sudo tar -xpf ubuntu-base-20.04.5-base-armhf.tar.gz -C ubuntu/
+sudo apt-get install qemu-user-static
+sudo cp /etc/resolv.conf ubuntu/etc/resolv.conf
+sudo cp /usr/bin/qemu-arm-static ubuntu/usr/bin/
+修改ubuntu/etc/apt/sources.list内容如下：
+
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal main restricted
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-updates main restricted
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal universe
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-updates universe
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal multiverse
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-updates multiverse
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-backports main restricted universe multiverse
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-security main restricted
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-security universe
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-security multiverse
+#~
+sudo mount -o bind /proc ubuntu/proc
+sudo mount -o bind /dev ubuntu/dev
+sudo chroot ubuntu
+##
+apt update
+apt install rsyslog systemd
+apt install sudo htop vim bash-completion
+apt install ssh net-tools ethtool ifupdown iputils-ping network-manager
+#~
+touch /etc/network/interfaces.d/eth0
+如果dhcp，eth0内容如下：
+
+auto eth0
+iface eth0 inet dhcp
+pre-up ifconfig eth0 hw ether 10:10:10:10:10:10
+如果固定ip，eth0内容如下：
+
+auto eth0
+iface eth0 inet static
+address 192.168.1.10
+netmask 255.255.255.0
+gateway 192.168.1.1
+dns-nameservers 223.5.5.5
+dns-nameservers 223.6.6.6
+pre-up ifconfig eth0 hw ether 10:10:10:10:10:20
+ip地址根据自己情况修改。
+#~
+echo "hi3798mv100" > /etc/hostname
+echo "127.0.0.1 localhost" >> /etc/hosts
+echo "127.0.0.1 hi3798mv100" >> /etc/hosts
+
+ln -s /lib/systemd/system/rc-local.service /etc/systemd/system/rc-local.service
+echo [Install] >> /etc/systemd/system/rc-local.service
+echo WantedBy=multi-user.target >> /etc/systemd/system/rc-local.service
+echo Alias=rc-local.service >> /etc/systemd/system/rc-local.service
+#~
+systemctl enable rc-local.service
+systemctl stop motd-news.timer
+systemctl mask motd-news.timer
+systemctl stop motd-news.service
+systemctl mask motd-news.service
+systemctl stop networkd-dispatcher
+systemctl mask networkd-dispatcher
+修改root密码
+
+passwd
+允许root远程ssh
+
+echo PermitRootLogin yes >> /etc/ssh/sshd_config
+#~
+exit
+
+sudo umount ubuntu/dev
+sudo umount ubuntu/proc
+#～
+将系统通过命令拷贝到镜像中：
+先删除原来的内容：
+sudo rm -rf /mnt/*
+再拷贝(这里的ubuntu/是你编好的系统)：
+sudo cp -R ubuntu/* /mnt/
+取消挂载
+sudo umount /mnt/
+将上面做好的rootfs-32.img下载下来替换原来TTL刷机包中的rootfs-32.img
+#~
+    挂载backup分区，取出backup-32.gz：
+mkdir /bak && sudo mount /dev/mmcblk0p8 /bak && cd /bak
+   把backup-32.gz删除
+    和方法一的4-7步骤一样，将系统拷贝到backup-32文件中
+#~   
+   使用更高压缩率（速度较慢，但压缩率更高）：
+gzip -9 -c rootfs-32.img > backup-32.gz
+  上传到bak目录
+    最后执行命令
+recoverbackup
+ #~
+ 开机后先执行resize2fs /dev/mmcblk0p9
+ 
+ Docker 一键安装脚本命令
+bash <(curl -sSL https://gitee.com/SuperManito/LinuxMirrors/raw/main/DockerInstallation.sh)
+
