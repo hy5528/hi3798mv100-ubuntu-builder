@@ -130,4 +130,29 @@ jobs:
         name: custom-rootfs-image
         path: |
           hi3798mv100-ubuntu-custom-*.img.gz
+        # 修正位置：retention-days 应在此处，与 name/path 对齐
         retention-days: 7
+
+    - name: 上传镜像到 WebDAV
+      if: success() # 仅在之前所有步骤成功时执行
+      env:
+        WEBDAV_URL: ${{ secrets.WEBDAV_URL }}       # 例如：https://dav.jianguoyun.com/dav/你的目录/
+        WEBDAV_USER: ${{ secrets.WEBDAV_USERNAME }}
+        WEBDAV_PASS: ${{ secrets.WEBDAV_PASSWORD }}
+      run: |
+        # 找到最新生成的镜像文件
+        IMAGE_FILE=$(ls -t hi3798mv100-ubuntu-custom-*.img.gz | head -1)
+        echo "准备上传文件：$IMAGE_FILE"
+
+        # 使用 curl 命令上传到 WebDAV
+        curl -f --connect-timeout 30 --retry 3 --retry-delay 5 \
+          -u "$WEBDAV_USER:$WEBDAV_PASS" \
+          -T "$IMAGE_FILE" \
+          "${WEBDAV_URL}${IMAGE_FILE}"
+
+        if [ $? -eq 0 ]; then
+          echo "✅ 镜像已成功上传至 WebDAV：${WEBDAV_URL}${IMAGE_FILE}"
+        else
+          echo "❌ 上传到 WebDAV 失败"
+          exit 1
+        fi
