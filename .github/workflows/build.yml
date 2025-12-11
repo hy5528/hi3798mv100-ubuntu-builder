@@ -1,0 +1,95 @@
+name: Build Hi3798MV100 RootFS
+
+on:
+  workflow_dispatch: # 允许在 GitHub 网页上手动触发构建
+  push:
+    branches: [ main ]
+    paths: # 只有关键文件变动时才触发构建，避免浪费资源
+      - 'rootfs-32.img'
+      - 'ubuntu-base-*.tar.gz'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04 # 使用 Ubuntu 22.04 的 runner
+    timeout-minutes: 60 # 设置超时，防止卡死
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+
+    - name: 设置环境并安装依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-user-static rsync gzip parted kpartx
+
+    - name: 准备构建空间
+      run: |
+        mkdir -p ubuntu-rootfs
+        mkdir -p /mnt/rootfs
+        # 解压基础系统
+        sudo tar -xpf ubuntu-base-*.tar.gz -C ubuntu-rootfs/
+
+    - name: 配置 QEMU 并进入 Chroot 环境构建
+      run: |
+        # 准备 QEMU 静态解释器
+        sudo cp /usr/bin/qemu-arm-static ubuntu-rootfs/usr/bin/
+        # 准备 chroot 环境
+        sudo cp -L /etc/resolv.conf ubuntu-rootfs/etc/resolv.conf
+        sudo mount -t proc /proc ubuntu-rootfs/proc
+        sudo mount -t sysfs /sys ubuntu-rootfs/sys
+        sudo mount -o bind /dev ubuntu-rootfs/dev
+        sudo mount -o bind /dev/pts ubuntu-rootfs/dev/pts
+        
+        # 这里是核心：在 chroot 中执行安装和配置命令
+        # 我们使用 heredoc 将命令通过 chroot 执行，完全模拟你的手动步骤
+        sudo chroot ubuntu-rootfs /bin/bash << 'CHROOT_EOF'
+        # 设置环境变量
+        export DEBIAN_FRONTEND=noninteractive
+        # 更新并安装基础包（这里是你原脚本的精华，但去除了交互）
+        apt-get update
+        apt-get upgrade -y
+        apt-get install -y systemd-sysv rsyslog sudo vim bash-completion \
+          ssh net-tools ethtool ifupdown network-manager iputils-ping wget curl htop
+        # 清理 apt
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
+        # 设置 root 密码（此处设为默认，你刷机后自己改）
+        echo "root:root123" | chpasswd
+        # 允许 root SSH 登录
+        echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+        # 退出 chroot
+        exit
+        CHROOT_EOF
+        
+        # 卸载 chroot 环境
+        sudo umount -lf ubuntu-rootfs/dev/pts
+        sudo umount -lf ubuntu-rootfs/dev
+        sudo umount -lf ubuntu-rootfs/sys
+        sudo umount -lf ubuntu-rootfs/proc
+
+    - name: 将新系统写入原始镜像
+      run: |
+        # 挂载原始镜像
+        sudo losetup -fP rootfs-32.img
+        LOOP_DEV=$(sudo losetup -j rootfs-32.img | cut -d: -f1)
+        sudo mount ${LOOP_DEV}p1 /mnt/rootfs # 假设根分区是第一个分区
+        # 清空并复制新系统
+        sudo rm -rf /mnt/rootfs/*
+        sudo rsync -a ubuntu-rootfs/ /mnt/rootfs/
+        # 卸载并释放 loop 设备
+        sudo umount /mnt/rootfs
+        sudo losetup -d $LOOP_DEV
+
+    - name: 创建压缩备份文件
+      run: |
+        gzip -9 -k -c rootfs-32.img > backup-$(date +%Y%m%d).gz
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: built-images
+        path: |
+          rootfs-32.img
+          backup-*.gz
+        retention-days: 7 # 产物保留7天
