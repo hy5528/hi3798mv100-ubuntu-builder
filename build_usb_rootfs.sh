@@ -1,5 +1,7 @@
 #!/bin/bash
+# build_usb_rootfs.sh - 为海思USB刷机包构建纯净Ubuntu系统
 set -e
+
 echo "=== 开始为USB刷机包构建纯净根文件系统 ==="
 
 # 1. 准备工作目录
@@ -24,8 +26,7 @@ sudo mount -o bind /dev "$ROOTFS_DIR/dev"
 sudo mount -o bind /dev/pts "$ROOTFS_DIR/dev/pts"
 
 # 4. 创建在Chroot内部执行的配置脚本
-CHROOT_SCRIPT="/tmp/usb_chroot_install.sh"
-sudo cat > "$CHROOT_SCRIPT" << 'INNER_EOF'
+cat > /tmp/usb_chroot_install.sh << 'INNER_EOF'
 #!/bin/bash
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -70,8 +71,8 @@ rm -f /usr/bin/qemu-arm-static
 echo "✅ USB包专用纯净系统配置完成"
 INNER_EOF
 
-sudo chmod +x "$CHROOT_SCRIPT"
-sudo cp "$CHROOT_SCRIPT" "$ROOTFS_DIR/tmp/"
+sudo chmod +x /tmp/usb_chroot_install.sh
+sudo cp /tmp/usb_chroot_install.sh "$ROOTFS_DIR/tmp/"
 
 # 5. 执行Chroot脚本
 echo "在Chroot中执行安装脚本..."
