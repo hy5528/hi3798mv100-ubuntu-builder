@@ -1,0 +1,270 @@
+name: Build Pure TTL Package
+
+on:
+  workflow_dispatch: # 手动触发
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+
+    steps:
+    - name: 1. 检出代码
+      uses: actions/checkout@v4
+
+    - name: 2. 下载原始 TTL 刷机包
+      run: |
+        echo "下载海纳思官方 TTL 刷机包..."
+        wget --no-check-certificate -c "https://node4.histb.com:9088/update/system/TTL-hi3798mv100-32bit.zip" -O original_ttl.zip
+        echo "原始刷机包信息:"
+        ls -lh original_ttl.zip
+        echo "分析包内容..."
+        unzip -l original_ttl.zip | head -20
+
+    - name: 3. 解压原始包并备份
+      run: |
+        # 解压到独立目录，作为我们的“模板”
+        mkdir -p ttl_template
+        unzip -q original_ttl.zip -d ttl_template/
+        
+        # 重点：备份原始rootfs，用于获取其精确大小
+        if [ -f "ttl_template/rootfs-32.img" ]; then
+          cp ttl_template/rootfs-32.img original_rootfs_backup.img
+          ORIG_SIZE=$(stat -c%s "ttl_template/rootfs-32.img")
+          echo "✅ 原始 rootfs-32.img 大小: $ORIG_SIZE 字节 (约 $((ORIG_SIZE/1024/1024))MB)"
+          echo "已备份为 original_rootfs_backup.img"
+        else
+          echo "❌ 错误：在TTL包中未找到 rootfs-32.img"
+          exit 1
+        fi
+        
+        echo "原始TTL包解压完成，文件列表:"
+        find ttl_template -type f | sort
+
+    - name: 4. 安装构建依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          qemu-user-static \
+          rsync \
+          gzip \
+          e2fsprogs \
+          zip \
+          unzip \
+          parted
+
+    - name: 5. 构建纯净 Ubuntu 根文件系统 (基于官方Base)
+      run: |
+        set -e
+        echo "=== 开始从零构建纯净 Ubuntu 系统 ==="
+        
+        # 5.1 创建临时工作目录
+        ROOTFS_DIR=$(pwd)/pure_rootfs_build
+        sudo rm -rf $ROOTFS_DIR
+        mkdir -p $ROOTFS_DIR
+        
+        # 5.2 下载并解压最干净的 Ubuntu Base 20.04
+        echo "下载官方 ubuntu-base..."
+        wget -c https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.5-base-armhf.tar.gz
+        sudo tar -xpf ubuntu-base-20.04.5-base-armhf.tar.gz -C $ROOTFS_DIR
+        
+        # 5.3 准备 chroot 环境
+        echo "准备 Chroot 环境..."
+        sudo cp /usr/bin/qemu-arm-static $ROOTFS_DIR/usr/bin/
+        sudo cp -L /etc/resolv.conf $ROOTFS_DIR/etc/
+        
+        # 挂载虚拟文件系统
+        sudo mount -t proc /proc $ROOTFS_DIR/proc
+        sudo mount -t sysfs /sys $ROOTFS_DIR/sys
+        sudo mount -o bind /dev $ROOTFS_DIR/dev
+        sudo mount -o bind /dev/pts $ROOTFS_DIR/dev/pts
+
+        # 5.4 在 Chroot 中配置纯净系统
+        echo "正在 Chroot 环境中安装和配置系统..."
+        sudo chroot $ROOTFS_DIR /bin/bash << 'CHROOT_EOF'
+        #!/bin/bash
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+        export LC_ALL=C
+        
+        echo "----- 第1步: 配置环境与软件源 -----"
+        # 关键修复：挂载tmpfs解决空间不足
+        mount -t tmpfs tmpfs /tmp
+        mount -t tmpfs tmpfs /var/cache/apt/archives
+        
+        # 使用华为云镜像源（国内稳定）
+        cat > /etc/apt/sources.list << 'SOURCES_EOF'
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal main restricted universe multiverse
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-updates main restricted universe multiverse
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-security main restricted universe multiverse
+deb http://repo.huaweicloud.com/ubuntu-ports/ focal-backports main restricted universe multiverse
+SOURCES_EOF
+        
+        echo "----- 第2步: 更新系统并安装核心软件 -----"
+        apt-get update
+        
+        # 分阶段安装，确保基础优先
+        apt-get install -y systemd systemd-sysv dbus
+        apt-get install -y ifupdown net-tools iproute2 iputils-ping
+        apt-get install -y openssh-server ssh sudo
+        apt-get install -y vim-tiny less lsof htop wget curl
+        apt-get install -y cron rsyslog logrotate bash-completion
+        apt-get install -y network-manager ethtool
+        
+        echo "----- 第3步: 基础系统配置 -----"
+        # 主机名与网络
+        echo "hi3798mv100" > /etc/hostname
+        cat > /etc/hosts << 'HOSTS_EOF'
+127.0.0.1   localhost
+127.0.1.1   hi3798mv100
+::1         ip6-localhost ip6-loopback
+fe00::0     ip6-localnet
+ff00::0     ip6-mcastprefix
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+HOSTS_EOF
+        
+        # 时区
+        ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+        
+        # Root 密码
+        echo "root:root123" | chpasswd
+        
+        # SSH 配置（允许Root登录）
+        sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+        sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        
+        # 网络配置 (DHCP)
+        mkdir -p /etc/network/interfaces.d
+        cat > /etc/network/interfaces.d/eth0 << 'NET_EOF'
+auto eth0
+iface eth0 inet dhcp
+NET_EOF
+        
+        echo "----- 第4步: 深度清理 -----"
+        apt-get autoremove -y --purge
+        apt-get clean
+        rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+        
+        # 移除构建用的模拟器
+        rm -f /usr/bin/qemu-arm-static
+        
+        echo "----- ✅ 纯净 Ubuntu 系统配置完成 -----"
+        CHROOT_EOF
+
+        # 5.5 卸载虚拟文件系统
+        sudo umount -lf $ROOTFS_DIR/dev/pts 2>/dev/null || true
+        sudo umount -lf $ROOTFS_DIR/dev 2>/dev/null || true
+        sudo umount -lf $ROOTFS_DIR/sys 2>/dev/null || true
+        sudo umount -lf $ROOTFS_DIR/proc 2>/dev/null || true
+        
+        echo "=== 纯净根文件系统构建完成 ==="
+
+    - name: 6. 创建与原始大小一致的纯净镜像
+      run: |
+        echo "=== 创建可直接替换的 rootfs-32.img ==="
+        
+        # 使用原始镜像的精确大小来创建新镜像
+        ORIG_SIZE=$(stat -c%s "original_rootfs_backup.img")
+        echo "目标镜像大小: $ORIG_SIZE 字节"
+        
+        # 创建空白文件
+        PURE_ROOTFS_IMG="rootfs-32-pure.img"
+        dd if=/dev/zero of="$PURE_ROOTFS_IMG" bs=1 count=0 seek=$ORIG_SIZE status=progress
+        
+        # 格式化为 ext4
+        mkfs.ext4 -F -L "rootfs" "$PURE_ROOTFS_IMG"
+        
+        # 挂载并复制我们构建的纯净系统
+        TEMP_MOUNT=$(pwd)/final_mount
+        mkdir -p $TEMP_MOUNT
+        sudo mount -o loop "$PURE_ROOTFS_IMG" $TEMP_MOUNT
+        sudo cp -a pure_rootfs_build/* $TEMP_MOUNT/
+        sync
+        sudo umount $TEMP_MOUNT
+        
+        # 检查文件系统完整性
+        e2fsck -p -f "$PURE_ROOTFS_IMG" || true
+        
+        echo "✅ 纯净镜像创建成功:"
+        ls -lh "$PURE_ROOTFS_IMG"
+
+    - name: 7. 替换并重新打包为完整TTL刷机包
+      run: |
+        echo "=== 重新打包为完整 TTL 刷机包 ==="
+        
+        # 7.1 准备最终打包目录
+        FINAL_PACKAGE_DIR=$(pwd)/TTL-hi3798mv100-32bit-PURE
+        rm -rf $FINAL_PACKAGE_DIR
+        mkdir -p $FINAL_PACKAGE_DIR
+        
+        # 7.2 复制原始TTL包的所有文件
+        echo "复制原始TTL包结构..."
+        cp -r ttl_template/* $FINAL_PACKAGE_DIR/
+        
+        # 7.3 用纯净镜像替换原 rootfs-32.img
+        echo "替换核心系统镜像..."
+        rm -f "$FINAL_PACKAGE_DIR/rootfs-32.img"
+        cp rootfs-32-pure.img "$FINAL_PACKAGE_DIR/rootfs-32.img"
+        
+        # 7.4 添加版本标识文件
+        cat > "$FINAL_PACKAGE_DIR/本包说明.txt" << 'EOF'
+        ========================================
+        海思 Hi3798mv100 纯净 Ubuntu TTL 刷机包
+        ========================================
+        
+        📢 重要说明
+        本刷机包基于官方海纳思 TTL 包制作，但核心系统已替换为纯净的 Ubuntu 20.04.5 Base。
+        
+        🔄 主要变更
+        1. 原厂 rootfs-32.img 已被替换为纯净 Ubuntu 系统
+        2. 系统除基础组件外，无任何预装第三方软件
+        3. 已配置国内软件源，更新安装更快速
+        
+        🛠 系统信息
+        - 系统版本: Ubuntu 20.04.5 LTS (Focal Fossa) Base
+        - 主机名称: hi3798mv100
+        - Root 密码: root123
+        - 默认时区: Asia/Shanghai
+        - 软件源: 华为云镜像
+        
+        📶 网络配置
+        - 默认启用 DHCP 自动获取IP
+        - SSH 服务已开启 (允许root登录)
+        
+        ⚡ 首次启动后必须执行
+        # 扩展根分区以使用全部存储空间
+        resize2fs /dev/mmcblk0p9
+        
+        🗓 构建日期: $(date)
+        EOF
+        
+        echo "最终刷机包内容:"
+        ls -la $FINAL_PACKAGE_DIR/
+        
+        # 7.5 打包成ZIP文件（与原始包同名，但内容已替换）
+        cd $FINAL_PACKAGE_DIR
+        zip -r ../TTL-hi3798mv100-32bit-PURE-$(date +%Y%m%d).zip .
+        cd ..
+        
+        echo "✅ 打包完成! 生成文件:"
+        ls -lh TTL-hi3798mv100-32bit-PURE-*.zip
+
+    - name: 8. 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: pure-ttl-package
+        path: |
+          TTL-hi3798mv100-32bit-PURE-*.zip
+          rootfs-32-pure.img
+        retention-days: 7
+
+    - name: 9. 清理临时文件 (可选)
+      if: always()
+      run: |
+        echo "清理构建过程中的临时文件..."
+        sudo rm -rf pure_rootfs_build final_mount ttl_template 2>/dev/null || true
+        rm -f original_ttl.zip original_rootfs_backup.img ubuntu-base-20.04.5-base-armhf.tar.gz 2>/dev/null || true
+        echo "清理完成，最终产物已保留。"
