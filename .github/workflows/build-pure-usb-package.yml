@@ -20,7 +20,7 @@ jobs:
       run: |
         echo "下载海纳思官方USB刷机包..."
         # 请将下方的URL替换为您找到的具体USB刷机包下载链接
-        # 例如：https://example.com/path/to/mv100-mdmo1a-usb-flash.zip
+        # 例如：https://node4.histb.com:9088/update/system/mv100-mdmo1g-usb-flash.zip
         USB_PACKAGE_URL="https://node4.histb.com:9088/update/system/mv100-mdmo1a-usb-flash.zip"
         wget --no-check-certificate -c "$USB_PACKAGE_URL" -O original_usb.zip
         echo "原始USB包信息:"
