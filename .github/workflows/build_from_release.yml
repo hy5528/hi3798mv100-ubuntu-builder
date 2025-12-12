@@ -17,7 +17,9 @@ jobs:
     - name: 下载基础镜像
       run: |
         # 从 Releases 下载已修复的基础镜像
-        wget -O base_rootfs.img https://github.com/hongli11/hi3798mv100-ubuntu-builder/releases/download/v1.0/rootfs-32.img        echo "下载完成。基础镜像信息："
+        wget -O base_rootfs.img https://github.com/hongli11/hi3798mv100-ubuntu-builder/releases/download/v1.0/rootfs-32.img
+        
+        echo "下载完成。基础镜像信息："
         ls -lh base_rootfs.img
         file base_rootfs.img || true
 
