@@ -49,7 +49,7 @@ SOURCES
 apt-get update
 apt-get install -y systemd systemd-sysv dbus
 apt-get install -y ifupdown net-tools iputils-ping openssh-server ssh sudo
-apt-get install -y vim-tiny wget curl cron rsyslog bash-completion
+apt-get install -y nano wget curl cron rsyslog bash-completion
 
 # 基础系统配置
 echo "hi3798mv100" > /etc/hostname
