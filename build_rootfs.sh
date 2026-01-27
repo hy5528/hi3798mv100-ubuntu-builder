@@ -42,7 +42,7 @@ SOURCES
 # 更新并安装核心包
 apt-get update
 apt-get install -y systemd systemd-sysv dbus ifupdown net-tools iputils-ping
-apt-get install -y openssh-server ssh sudo vim-tiny wget curl cron rsyslog
+apt-get install -y openssh-server ssh sudo nano wget curl cron rsyslog
 
 # 基础配置
 echo "hi3798mv100" > /etc/hostname
