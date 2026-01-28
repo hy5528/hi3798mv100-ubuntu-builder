@@ -28,6 +28,7 @@ jobs:
         echo "包内容:"
         ls -la usb_template/mv100/
         cp "usb_template/mv100/www_ecoo_top.ext4" original_system.ext4
+        rm -f "usb_template/mv100/www_ecoo_top.ext4"
         echo "✅ 已备份原系统文件:"
         ls -lh original_system.ext4
 
