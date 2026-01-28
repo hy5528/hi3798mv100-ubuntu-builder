@@ -11,8 +11,8 @@ mkdir -p "$ROOTFS_DIR"
 
 # 2. 下载并解压最干净的 Ubuntu Base 20.04 (armhf)
 echo "下载官方 Ubuntu Base..."
-wget -q -c https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/ubuntu-base-20.04.5-base-armhf.tar.gz
-sudo tar -xpf ubuntu-base-20.04.5-base-armhf.tar.gz -C "$ROOTFS_DIR"
+wget -q -c https://cdimage.ubuntu.com/ubuntu-base/releases/jammy/release/ubuntu-base-22.04-base-armhf.tar.gz
+sudo tar -xpf ubuntu-base-22.04-base-armhf.tar.gz -C "$ROOTFS_DIR"
 
 # 3. 准备Chroot环境
 echo "准备Chroot环境..."
@@ -39,10 +39,10 @@ mount -t tmpfs tmpfs /var/cache/apt/archives
 
 # 配置国内软件源
 cat > /etc/apt/sources.list << 'SOURCES'
-deb http://repo.huaweicloud.com/ubuntu-ports/ focal main restricted universe multiverse
-deb http://repo.huaweicloud.com/ubuntu-ports/ focal-updates main restricted universe multiverse
-deb http://repo.huaweicloud.com/ubuntu-ports/ focal-security main restricted universe multiverse
-deb http://repo.huaweicloud.com/ubuntu-ports/ focal-backports main restricted universe multiverse
+deb http://ports.ubuntu.com/ jammy main restricted universe multiverse
+deb http://ports.ubuntu.com/ jammy-security main restricted universe multiverse
+deb http://ports.ubuntu.com/ jammy-updates main restricted universe multiverse
+deb http://ports.ubuntu.com/ jammy-backports main restricted universe multiverse
 SOURCES
 
 # 更新并安装最核心的软件包
